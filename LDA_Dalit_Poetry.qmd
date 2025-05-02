@@ -1,0 +1,248 @@
+```{r libraries, echo = FALSE, warning = FALSE}
+
+library(pdftools)
+library(tidytext)
+library(tidyverse)
+library(knitr) 
+library(tm)
+library(topicmodels)
+library(ggplot2)
+library(lda)
+library(ldatuning)
+library(textstem)
+
+```
+
+
+```{r functions, echo = FALSE}
+
+read_text_files <- function(file_path) {
+  text_files <- list.files(path = file_path, pattern = "\\.txt$", full.names = TRUE)
+  text_data <- map(text_files, readLines)
+  text_data <- text_data[lengths(text_data) != 0]
+  return(text_data)
+}
+
+make_corpus <- function(text_data) {
+  document <- Corpus(VectorSource(text_data))
+  document <- tm_map(document, content_transformer(tolower))
+  document <- tm_map(document, content_transformer(function(x) gsub("\\\\n", " ", x)))
+  document <- tm_map(document, content_transformer(function(x) lemmatize_strings(x)))
+
+  # Remove numbers and punctuation
+  
+  document <- tm_map(document, removeNumbers, lazy = FALSE)
+  document <- tm_map(document, removePunctuation, preserve_intra_word_contractions = TRUE, preserve_intra_word_dashes = TRUE)
+  toSpace <- content_transformer(function(x, pattern) gsub(pattern, " ", x)) # from https://rpubs.com/olga_bradford/468821
+  random_chars <- c("•", "", "‘", "–", "’", "“", "\"\",", "\\\"\\\")", "—", "\n", "\\\\n", "…", "”")
+  for (i in seq_along(random_chars)) {
+    document <- tm_map(document, toSpace, random_chars[i])
+  }
+  
+  # Remove words (stopwords and names)
+  
+  document <- tm_map(document, removeWords, stopwords("english"))
+  
+  terms <- c("anthology", "dalit", "dalits","literature", "tranlsated", "don", "hte", "hke","come", "get", "one", "now", "will", "like", "can", "let", "life", "day", "say", "know") # "even", "bloodnnnnn"
+  
+  names <- tolower(c("Hira", "Bansode", "Pralhad", "Chendwankar", "Arjun", "Dangle", "Namdeo", "Dhasal", "Mina", "Gajbhiye", "Anuradha", "Gaurav", "Arun", "Kamble", "Waman", "Kardak", "Jyoti", "Lanjewar", "Mina", "Londe", "Yeshwant", "Manohar", "Keshav", "Meshram", "Waman", "Nimbalkar", "Daya", "Pawar", "J.V.", "Pawar", "Tryambak", "Sapkale", "Navayan", "Surve", "Jayant", "Karve", "Eleanor", "Zelliot", "Abimani", "Imayam", "Azhakiyan", "Periyavan", "J.B. Sanakya", "Sivakami", "Karuthayi", "Manohari", "Meena", "Kandasamy","Ravi", "Shanker", "Jai", "Prakash", "Anita", "Bharti", "Rukhsana", "Jayant", "Parmar", "Thakur", "Charal", "Kalyani", "Biswas", "Sarkar", "Rajkumar", "Sukirtharani", "Umadevi", "Poonam", "Tushamad", "Rajat", "Rani", "Meenu", "Shyamal", "Kumar", "Pramanik"))
+  
+  document <- tm_map(document, removeWords, c(names, terms))
+  document <- tm_map(document, stripWhitespace)
+  
+  return(document)
+
+}
+
+make_DTM <- function(document) {
+  minimumFrequency <- 1
+  DTM <- DocumentTermMatrix(document, control = list(bounds = list(global = c(minimumFrequency, Inf))))
+  dimensions <- dim(DTM)
+  sel_idx <- slam::row_sums(DTM) > 0
+  DTM <- DTM[sel_idx, ]
+  return(DTM)
+}
+
+```
+
+
+# Loading the Data and Making DTMs
+
+```{r, warning = FALSE}
+
+marathi_anthology_dalit_lit_files <- list.files("../data/poetry/marathi_anthology_of_dalit_lit_files", full.names = TRUE)
+marathi_anthology_dalit_lit <- read_text_files("../data/poetry/test")
+marathi_poetry_files <- list.files("../data/poetry/marathi_poetry", full.names = TRUE)
+marathi_poetry_files_full <- append(marathi_anthology_dalit_lit_files, marathi_poetry_files)
+marathi_poetry <- map(marathi_poetry_files, pdf_text)
+tamil_poetry_files <- list.files("../data/poetry/tamil_poetry", full.names = TRUE)
+tamil_poetry <- map(tamil_poetry_files, pdf_text)
+hindi_urdu_poetry_files <- list.files("../data/poetry/hindi_urdu_poetry", full.names = TRUE)
+hindi_urdu_poetry <- map(hindi_urdu_poetry_files, pdf_text)
+bengali_poetry_files <- list.files("../data/poetry/bengali_poetry", full.names = TRUE)
+bengali_poetry <- map(bengali_poetry_files, pdf_text)
+
+tamil_corpus <- make_corpus(tamil_poetry)
+marathi_1_corpus <- make_corpus(marathi_anthology_dalit_lit) 
+marathi_2_corpus <- make_corpus(marathi_poetry)
+hindi_urdu_corpus <- make_corpus(hindi_urdu_poetry)
+bengali_corpus <- make_corpus(bengali_poetry)
+full_corpus <- tm:::c.VCorpus(tamil_corpus, hindi_urdu_corpus, bengali_corpus, marathi_1_corpus, marathi_2_corpus)
+marathi_corpus <- tm:::c.VCorpus(marathi_1_corpus, marathi_2_corpus)
+
+DTM_1 <- make_DTM(tamil_corpus) # 90
+DTM_2 <- map(marathi_corpus, make_DTM)
+DTM_2 <- DTM_2$content # 100
+DTM_3 <- make_DTM(hindi_urdu_corpus) # 81
+DTM_4 <- make_DTM(bengali_corpus) # 111
+DTM_full <- map(full_corpus, make_DTM)
+DTM_main <- DTM_full$content # 382, terms: 6545 / 9064
+
+```
+
+# LDA tuning
+
+```{r}
+
+result1 <- ldatuning::FindTopicsNumber(
+  DTM_main,
+  topics = seq(from = 2, to = 60, by = 2),
+  metrics = c("Griffiths2004", "Arun2010"), # CaoJuan2009
+  method = "Gibbs",
+  control = list(seed = 1234),
+  verbose = TRUE
+)
+
+FindTopicsNumber_plot(result1)
+
+```
+
+# Top 10 Terms for LDA
+
+```{r}
+
+produce_top_10_terms <- function(DTM, k, seed_value) {
+  topic_model <- LDA(DTM, k = k, control = list(seed = seed_value))
+  top_10_terms <- as_tibble(terms(topic_model, 10))
+  top_5_terms_per_topic <- terms(topic_model, 5)
+  topic_names <- apply(top_5_terms_per_topic, 2, paste, collapse=" ")
+  # names(top_10_terms) <- topic_names
+  return(top_10_terms)
+}
+
+
+produce_top_10_terms(DTM_main, k = 20, seed_value = 500) # full 
+produce_top_10_terms(DTM_1, k = 5, seed_value = 1234 ) # tamil
+produce_top_10_terms(DTM_2, k = 5, seed_value = 1234) # marathi
+produce_top_10_terms(DTM_3, k = 5, seed_value = 1234) # hindi/urdu
+produce_top_10_terms(DTM_4, k = 5, seed_value = 1234) # bengali
+
+```
+
+# Visualizations
+
+```{r}
+
+# word probability for each topic
+
+topic_model <- LDA(DTM_main, k = 20, control = list(seed = 500)) # try with ten different seed values, output csv files
+
+beta_topics <- tidy(topic_model, matrix = "beta")
+  
+beta_top_terms <- beta_topics %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 10) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+beta_top_terms %>%
+  filter(topic %in% c(1, 3, 4, 5, 11, 16)) %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(beta, term)) + #color = factor(topic) color = "#537ACE"
+  # geom_col(show.legend = FALSE)+
+  geom_point(show.legend = FALSE, color = "#537ACE") +
+  facet_wrap( ~ topic, scales = "free") +
+  scale_y_reordered() + 
+  theme_minimal()
+
+# topic proportion for each document
+
+tidy(DTM_main) %>%
+  filter(document == 3) %>%
+  arrange(desc(count))
+
+gamma_documents <- tidy(topic_model, matrix = "gamma") 
+gamma_documents
+
+doc_gamma_df <- data.frame(gamma_documents)
+doc_gamma_df$chapter <- rep(1:dim(DTM_main)[[1]], 20)
+
+ggplot(doc_gamma_df, aes(x = chapter, y = gamma, group = factor(topic), color = factor(topic))) +
+  geom_line() +
+  facet_wrap(~factor(topic))
+
+doc_gamma_df %>%
+  filter(gamma >= 0.25) %>%
+  group_by(topic)
+
+```
+
+# List for Referencing Documents and Corresponding Topics 
+
+```{r, warning = FALSE}
+# Code adapted from ChatGPT
+
+texts <- list()
+
+for (file in c(tamil_poetry_files, hindi_urdu_poetry_files, bengali_poetry_files, marathi_poetry_files_full)) {
+  # Extract the name of the file without extension
+  file_name <- tools::file_path_sans_ext(basename(file))
+  folder_name <- sub("\\_.*", "", basename(dirname(file)))
+  file_name <- str_c(file_name, "_", folder_name)
+  # Read the PDF content
+  if (file %in% c(tamil_poetry_files, hindi_urdu_poetry_files, bengali_poetry_files, marathi_poetry_files)) {
+    text <- pdf_text(file)
+  # Store the content in the list, using the file name as the key
+    texts[[file_name]] <- text
+  } else {
+    texts[[file_name]] <- read_text_files("../data/poetry/marathi_anthology_of_dalit_lit_files")
+  }
+}
+
+files1 <- names(texts)
+doc_topics <- as.data.frame(posterior(topic_model)$topics)
+topic_probabilities <- posterior(topic_model)$topics
+
+top_n <- 1
+top_topics <- apply(topic_probabilities, 1, function(x) order(x, decreasing = TRUE)[1])
+print(dim(top_topics))
+
+top_topics_df <- data.frame(
+  file_name = rep(files1, each = top_n), 
+  topic = as.vector(t(top_topics))         
+  # rank = rep(1:top_n, times = length(files1))
+)
+
+topic_modeling_results <- top_topics_df %>%
+  mutate(language = str_extract(file_name, "(?<=\\_)[a-zA-Z]+$"), author = str_extract(file_name, "^[a-zA-Z]+"))
+
+```
+
+# Number of Poems from Regional Language Per Topic Visualization
+
+
+```{r}
+topic_modeling_results %>%
+  group_by(language, topic) %>%
+  summarize(count = n()) %>%
+  ggplot() +
+  geom_col(aes(x = topic, y = count, fill = language), color = "grey")+
+  scale_fill_manual(values = c("#D5E2FF", "#9CBCFF", "#537ACE", "#07369A"), labels = c('Bengali', 'Hindi/Urdu', 'Marathi', 'Tamil'))+
+  labs(
+       x = "topic",
+       y = "count") +
+  theme_minimal() 
+
+```
+
+
