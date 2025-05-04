@@ -1,1 +1,3 @@
+This GitHub repository corresponds with the Math honors thesis "Modeling Literary Connections: Exploring Transregional Resistance in Dalit Poetry," completed by Antara Bhattacharyay and advised by Dr. Andrew Beveridge and Dr. Niharika Yadav at Macalester College (May 2025).
 
+This repository contains a csv file with information about the poems utilized in this project (including poem title, author(s), translator(s), original language, source, and topics corresponding to documents based upon different modeling results). This repository also contains the code for preprocessing text data and implementing topic modeling on these specific Dalit poetry corpi.
